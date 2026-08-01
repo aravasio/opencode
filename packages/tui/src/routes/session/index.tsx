@@ -74,6 +74,7 @@ import { setPreLayoutSiblingMargin } from "../../util/layout"
 import { useTuiConfig } from "../../config"
 import { useClipboard } from "../../context/clipboard"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
+import { nextToolOutputMode, useToolOutputMode, type ToolOutputMode } from "../../context/tool-output"
 import { getScrollAcceleration } from "../../util/scroll"
 import { collapseToolOutput } from "../../util/collapse-tool-output"
 import { usePluginRuntime } from "../../plugin/runtime"
@@ -129,6 +130,7 @@ const sessionBindingCommands = [
   "session.toggle.actions",
   "session.toggle.scrollbar",
   "session.toggle.generic_tool_output",
+  "session.toggle.tool_output",
   "session.first",
   "session.last",
   "session.messages_last_user",
@@ -163,6 +165,7 @@ const context = createContext<{
   showTimestamps: () => boolean
   showDetails: () => boolean
   showGenericToolOutput: () => boolean
+  toolOutputMode: () => ToolOutputMode
   diffWrapMode: () => "word" | "none"
   providers: () => ReadonlyMap<string, Provider>
   sync: ReturnType<typeof useSync>
@@ -259,6 +262,8 @@ export function Session() {
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
+  const toolOutput = useToolOutputMode()
+  const toolOutputMode = toolOutput.mode
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
@@ -743,6 +748,23 @@ export function Session() {
       },
     },
     {
+      title: (() => {
+        const next = nextToolOutputMode(toolOutputMode())
+        if (next === "collapsed") return "Collapse tool output"
+        return "Expand tool output"
+      })(),
+      value: "session.toggle.tool_output",
+      category: "Session",
+      slash: {
+        name: "collapse",
+        aliases: ["toggle-collapse"],
+      },
+      run: () => {
+        toolOutput.set(nextToolOutputMode(toolOutputMode()))
+        dialog.clear()
+      },
+    },
+    {
       title: "Page up",
       value: "session.page.up",
       category: "Session",
@@ -1156,6 +1178,7 @@ export function Session() {
           showTimestamps,
           showDetails,
           showGenericToolOutput,
+          toolOutputMode,
           diffWrapMode,
           providers,
           sync,
@@ -2098,23 +2121,40 @@ function Shell(props: ToolProps) {
 function Write(props: ToolProps) {
   const { theme, syntax } = useTheme()
   const pathFormatter = usePathFormatter()
+  const ctx = use()
+  const [override, setOverride] = createSignal<boolean>()
+  const expanded = createMemo(() => override() ?? ctx.toolOutputMode() === "expanded")
   const code = createMemo(() => {
     return stringValue(props.input.content) ?? ""
   })
+  const lines = createMemo(() => (code() ? code().split("\n").length : 0))
 
   return (
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
-        <BlockTool title={"# Wrote " + pathFormatter.format(stringValue(props.input.filePath))} part={props.part}>
-          <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>
-            <code
-              conceal={false}
-              fg={theme.text}
-              filetype={filetype(stringValue(props.input.filePath))}
-              syntaxStyle={syntax()}
-              content={code()}
-            />
-          </line_number>
+        <BlockTool
+          title={"# Wrote " + pathFormatter.format(stringValue(props.input.filePath))}
+          part={props.part}
+          onClick={() => setOverride(!expanded())}
+        >
+          <Show
+            when={expanded()}
+            fallback={
+              <text fg={theme.textMuted} paddingLeft={3}>
+                {lines()} lines — Click to expand
+              </text>
+            }
+          >
+            <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>
+              <code
+                conceal={false}
+                fg={theme.text}
+                filetype={filetype(stringValue(props.input.filePath))}
+                syntaxStyle={syntax()}
+                content={code()}
+              />
+            </line_number>
+          </Show>
           <Diagnostics diagnostics={props.metadata.diagnostics} filePath={stringValue(props.input.filePath) ?? ""} />
         </BlockTool>
       </Match>
@@ -2385,10 +2425,20 @@ function Execute(props: ToolProps) {
   )
 }
 
+function diffStats(diff: string) {
+  const lines = diff.split("\n")
+  return {
+    added: lines.filter((x) => x.startsWith("+") && !x.startsWith("+++")).length,
+    removed: lines.filter((x) => x.startsWith("-") && !x.startsWith("---")).length,
+  }
+}
+
 function Edit(props: ToolProps) {
   const ctx = use()
   const { theme, syntax } = useTheme()
   const pathFormatter = usePathFormatter()
+  const [override, setOverride] = createSignal<boolean>()
+  const expanded = createMemo(() => override() ?? ctx.toolOutputMode() === "expanded")
 
   const view = createMemo(() => {
     const diffStyle = ctx.tui.diff_style
@@ -2400,32 +2450,46 @@ function Edit(props: ToolProps) {
   const ft = createMemo(() => filetype(stringValue(props.input.filePath)))
 
   const diffContent = createMemo(() => stringValue(props.metadata.diff) ?? "")
+  const stats = createMemo(() => diffStats(diffContent()))
 
   return (
     <Switch>
       <Match when={stringValue(props.metadata.diff) !== undefined}>
-        <BlockTool title={"← Edit " + pathFormatter.format(stringValue(props.input.filePath))} part={props.part}>
-          <box paddingLeft={1}>
-            <diff
-              diff={diffContent()}
-              view={view()}
-              filetype={ft()}
-              syntaxStyle={syntax()}
-              showLineNumbers={true}
-              width="100%"
-              wrapMode={ctx.diffWrapMode()}
-              fg={theme.text}
-              addedBg={theme.diffAddedBg}
-              removedBg={theme.diffRemovedBg}
-              contextBg={theme.diffContextBg}
-              addedSignColor={theme.diffHighlightAdded}
-              removedSignColor={theme.diffHighlightRemoved}
-              lineNumberFg={theme.diffLineNumber}
-              lineNumberBg={theme.diffContextBg}
-              addedLineNumberBg={theme.diffAddedLineNumberBg}
-              removedLineNumberBg={theme.diffRemovedLineNumberBg}
-            />
-          </box>
+        <BlockTool
+          title={"← Edit " + pathFormatter.format(stringValue(props.input.filePath))}
+          part={props.part}
+          onClick={() => setOverride(!expanded())}
+        >
+          <Show
+            when={expanded()}
+            fallback={
+              <text fg={theme.textMuted} paddingLeft={3}>
+                +{stats().added} -{stats().removed} lines — Click to expand
+              </text>
+            }
+          >
+            <box paddingLeft={1}>
+              <diff
+                diff={diffContent()}
+                view={view()}
+                filetype={ft()}
+                syntaxStyle={syntax()}
+                showLineNumbers={true}
+                width="100%"
+                wrapMode={ctx.diffWrapMode()}
+                fg={theme.text}
+                addedBg={theme.diffAddedBg}
+                removedBg={theme.diffRemovedBg}
+                contextBg={theme.diffContextBg}
+                addedSignColor={theme.diffHighlightAdded}
+                removedSignColor={theme.diffHighlightRemoved}
+                lineNumberFg={theme.diffLineNumber}
+                lineNumberBg={theme.diffContextBg}
+                addedLineNumberBg={theme.diffAddedLineNumberBg}
+                removedLineNumberBg={theme.diffRemovedLineNumberBg}
+              />
+            </box>
+          </Show>
           <Diagnostics diagnostics={props.metadata.diagnostics} filePath={stringValue(props.input.filePath) ?? ""} />
         </BlockTool>
       </Match>
@@ -2488,21 +2552,39 @@ function ApplyPatch(props: ToolProps) {
     <Switch>
       <Match when={files().length > 0}>
         <For each={files()}>
-          {(file) => (
-            <BlockTool title={title(file)} part={props.part}>
-              <Show
-                when={file.type !== "delete"}
-                fallback={
-                  <text fg={theme.diffRemoved}>
-                    -{file.deletions} line{file.deletions !== 1 ? "s" : ""}
-                  </text>
-                }
+          {(file) => {
+            const [override, setOverride] = createSignal<boolean>()
+            const expanded = createMemo(() => override() ?? ctx.toolOutputMode() === "expanded")
+            const stats = createMemo(() => diffStats(file.patch))
+            return (
+              <BlockTool
+                title={title(file)}
+                part={props.part}
+                onClick={file.type !== "delete" ? () => setOverride(!expanded()) : undefined}
               >
-                <Diff diff={file.patch} filePath={file.filePath} />
-                <Diagnostics diagnostics={props.metadata.diagnostics} filePath={file.movePath ?? file.filePath} />
-              </Show>
-            </BlockTool>
-          )}
+                <Show
+                  when={file.type !== "delete"}
+                  fallback={
+                    <text fg={theme.diffRemoved}>
+                      -{file.deletions} line{file.deletions !== 1 ? "s" : ""}
+                    </text>
+                  }
+                >
+                  <Show
+                    when={expanded()}
+                    fallback={
+                      <text fg={theme.textMuted} paddingLeft={3}>
+                        +{stats().added} -{stats().removed} lines — Click to expand
+                      </text>
+                    }
+                  >
+                    <Diff diff={file.patch} filePath={file.filePath} />
+                  </Show>
+                  <Diagnostics diagnostics={props.metadata.diagnostics} filePath={file.movePath ?? file.filePath} />
+                </Show>
+              </BlockTool>
+            )
+          }}
         </For>
       </Match>
       <Match when={true}>

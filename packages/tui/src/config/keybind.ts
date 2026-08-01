@@ -149,6 +149,7 @@ export const Definitions = {
   messages_toggle_conceal: keybind("<leader>h", "Toggle code block concealment in messages"),
   tool_details: keybind("none", "Toggle tool details visibility"),
   display_thinking: keybind("none", "Toggle thinking blocks visibility"),
+  collapse_tool_output: keybind("none", "Toggle tool code/diff output collapse"),
 
   prompt_submit: keybind("none", "Submit prompt"),
   prompt_editor_context_clear: keybind("none", "Clear editor context"),
@@ -354,6 +355,7 @@ export const CommandMap = {
   messages_toggle_conceal: "session.toggle.conceal",
   tool_details: "session.toggle.actions",
   display_thinking: "session.toggle.thinking",
+  collapse_tool_output: "session.toggle.tool_output",
   prompt_submit: "prompt.submit",
   prompt_editor_context_clear: "prompt.editor_context.clear",
   prompt_skills: "prompt.skills",
