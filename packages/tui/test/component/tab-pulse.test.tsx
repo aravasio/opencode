@@ -20,10 +20,12 @@ test("a prompt pulse restarts the neutral edge flash while the tab remains busy"
     () => (
       <box width={8} height={1} backgroundColor={background}>
         <TabPulse
-          active={true}
-          promptPulse={promptPulse()}
-          color={background}
-          flashColor={flash}
+          layer={{
+            active: true,
+            promptPulse: promptPulse(),
+            color: background,
+            flashColor: flash,
+          }}
           backgroundColor={background}
         />
       </box>
@@ -48,6 +50,78 @@ test("a prompt pulse restarts the neutral edge flash while the tab remains busy"
     expect(firstBackground()?.equals(background)).toBeTrue()
 
     setPromptPulse(2)
+    await Bun.sleep(80)
+    await app.renderOnce()
+    expect(firstBackground()?.equals(background)).toBeFalse()
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("edge layers animate independently", async () => {
+  const background = RGBA.fromHex("#101010")
+  const lower = RGBA.fromHex("#ff0000")
+  const upper = RGBA.fromHex("#0000ff")
+  const [edgeGlow, setEdgeGlow] = createSignal(false)
+  const app = await testRender(
+    () => (
+      <box width={8} height={1} backgroundColor={background}>
+        <TabPulse
+          edge="above"
+          layer={{ color: background, glow: true, glowColor: lower }}
+          edgeLayer={{ color: background, glow: edgeGlow(), glowColor: upper }}
+          backgroundColor={background}
+        />
+      </box>
+    ),
+    { width: 8, height: 1 },
+  )
+
+  try {
+    await app.renderOnce()
+    const initial = app.captureSpans().lines[0]?.spans[0]
+    expect(initial?.text.startsWith("▄")).toBeTrue()
+    expect(initial?.fg.r ?? 0).toBeGreaterThan(initial?.fg.b ?? 0)
+    expect(initial?.bg.equals(background)).toBeTrue()
+
+    setEdgeGlow(true)
+    await Bun.sleep(80)
+    await app.renderOnce()
+    const updated = app.captureSpans().lines[0]?.spans[0]
+    expect(updated?.fg.r ?? 0).toBeGreaterThan(updated?.fg.b ?? 0)
+    expect(updated?.bg.b ?? 0).toBeGreaterThan(updated?.bg.r ?? 0)
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("an atomic active-to-complete layer update starts the completion pulse", async () => {
+  const background = RGBA.fromHex("#101010")
+  const completion = RGBA.fromHex("#f0f0f0")
+  const [state, setState] = createSignal({ active: true, complete: false })
+  const app = await testRender(
+    () => (
+      <box width={8} height={1} backgroundColor={background}>
+        <TabPulse
+          layer={{
+            ...state(),
+            color: background,
+            completionColor: completion,
+          }}
+          backgroundColor={background}
+        />
+      </box>
+    ),
+    { width: 8, height: 1 },
+  )
+
+  const firstBackground = () => app.captureSpans().lines[0]?.spans[0]?.bg
+
+  try {
+    await app.renderOnce()
+    expect(firstBackground()?.equals(background)).toBeTrue()
+
+    setState({ active: false, complete: true })
     await Bun.sleep(80)
     await app.renderOnce()
     expect(firstBackground()?.equals(background)).toBeFalse()
